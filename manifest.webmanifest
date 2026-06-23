@@ -1,0 +1,18 @@
+{
+  "name": "QP.ai",
+  "short_name": "QP.ai",
+  "description": "Smart Question Papers, Instantly.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F9FAFB",
+  "theme_color": "#4F46E5",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
