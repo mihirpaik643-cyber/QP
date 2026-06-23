@@ -100,13 +100,14 @@ const state = {
   },
   questions: JSON.parse(localStorage.getItem("qp-bank") || "null") || sampleQuestions,
   papers: JSON.parse(localStorage.getItem("qp-papers") || "null") || [
-    { id: "p1", title: "Class 7 English Unit Test", className: "7", subject: "English", date: "23 Jun 2026", count: 18, marks: 40, synced: "Local" },
-    { id: "p2", title: "Science Worksheet - Water", className: "6", subject: "Science", date: "20 Jun 2026", count: 12, marks: 30, synced: "Drive" }
+    { id: "p1", title: "Class 7 English Unit Test", className: "7", subject: "English", language: "English", date: "23 Jun 2026", count: 18, marks: 40, synced: "Local" },
+    { id: "p2", title: "Science Worksheet - Water", className: "6", subject: "Science", language: "English", date: "20 Jun 2026", count: 12, marks: 30, synced: "Drive" }
   ],
   activeQuestions: [],
   showAnswers: false,
   cloud: JSON.parse(localStorage.getItem("qp-cloud") || '{"google":false,"oneDrive":false}'),
   filters: { query: "", className: "", subject: "", type: "", difficulty: "", favorites: false },
+  paperFilters: { query: "", className: "", subject: "", language: "" },
   uploadResults: [],
   searchQuery: "",
   searchLoading: false,
@@ -152,6 +153,10 @@ function escapeHtml(value) {
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function confirmDelete(message) {
+  return typeof confirm === "function" ? confirm(message) : true;
 }
 
 function subjectManager() {
@@ -336,11 +341,17 @@ function dashboard() {
 }
 
 function paperCard(paper) {
-  return `<button class="paper-card" data-go="/paper-preview/${paper.id}">
-    <strong>${paper.title}</strong>
-    <p class="muted">Class ${paper.className} &middot; ${paper.subject} &middot; ${paper.date}</p>
-    <div class="badge-row"><span class="badge">${paper.count} questions</span><span class="badge">${paper.marks} marks</span><span class="badge">${paper.synced}</span></div>
-  </button>`;
+  return `<article class="paper-card">
+    <button class="paper-main" data-go="/paper-preview/${paper.id}">
+      <strong>${paper.title}</strong>
+      <p class="muted">Class ${paper.className} &middot; ${paper.subject} &middot; ${paper.language || "English"} &middot; ${paper.date}</p>
+      <div class="badge-row"><span class="badge">${paper.count} questions</span><span class="badge">${paper.marks} marks</span><span class="badge">${paper.synced}</span></div>
+    </button>
+    <div class="card-actions">
+      <button class="secondary-btn" data-go="/paper-preview/${paper.id}">Preview</button>
+      <button class="danger-lite-btn" data-delete-paper="${paper.id}">Delete</button>
+    </div>
+  </article>`;
 }
 
 function createConfig() {
@@ -620,11 +631,33 @@ function searchResultCard(question) {
 }
 
 function savedPapers() {
+  const filteredPapers = state.papers.filter((paper) => {
+    const query = state.paperFilters.query.toLowerCase();
+    return (!query || paper.title.toLowerCase().includes(query) || paper.subject.toLowerCase().includes(query)) &&
+      (!state.paperFilters.className || paper.className === state.paperFilters.className) &&
+      (!state.paperFilters.subject || paper.subject === state.paperFilters.subject) &&
+      (!state.paperFilters.language || (paper.language || "English") === state.paperFilters.language);
+  });
   return shell(
     "My Papers",
     `
-    <section class="card"><input class="search-input" placeholder="Search saved papers" /><div class="chip-row" style="margin-top:12px"><span class="chip active">Newest</span><span class="chip">Class</span><span class="chip">Subject</span><span class="chip">Language</span></div></section>
-    <section class="section grid">${state.papers.map(paperCard).join("") || '<div class="empty card">Create your first paper.</div>'}</section>
+    <section class="card">
+      <input class="search-input" placeholder="Search by paper name or subject" value="${escapeHtml(state.paperFilters.query)}" data-paper-filter="query" />
+      <div class="filter-block">
+        <strong>Class</strong>
+        <div class="chip-row">${["", ...Array.from({ length: 10 }, (_, i) => String(i + 1))].map((c) => `<button class="chip ${state.paperFilters.className === c ? "active" : ""}" data-paper-filter-chip="className" data-value="${c}">${c || "All"}</button>`).join("")}</div>
+      </div>
+      <div class="filter-block">
+        <strong>Subject</strong>
+        <div class="chip-row">${["", ...allSubjects()].map((s) => `<button class="chip ${state.paperFilters.subject === s ? "active" : ""}" data-paper-filter-chip="subject" data-value="${s}">${s || "All"}</button>`).join("")}</div>
+      </div>
+      <div class="filter-block">
+        <strong>Language</strong>
+        <div class="chip-row">${["", "English", "Hindi", "Bilingual"].map((language) => `<button class="chip ${state.paperFilters.language === language ? "active" : ""}" data-paper-filter-chip="language" data-value="${language}">${language || "All"}</button>`).join("")}</div>
+      </div>
+      <div class="section-head" style="margin:12px 0 0"><span class="muted">${filteredPapers.length} paper${filteredPapers.length === 1 ? "" : "s"} found</span><button class="link-btn" data-clear-paper-filters>Clear filters</button></div>
+    </section>
+    <section class="section grid">${filteredPapers.map(paperCard).join("") || '<div class="empty card">No papers match these filters.</div>'}</section>
     <div class="sticky-actions"><button class="primary-btn" data-go="/create-paper/config">New Paper</button></div>`
   );
 }
@@ -821,9 +854,21 @@ function wireEvents() {
   document.querySelectorAll("[data-delete-question]").forEach((button) =>
     button.addEventListener("click", () => {
       const id = Number(button.dataset.deleteQuestion);
+      const question = [...state.activeQuestions, ...state.questions].find((q) => q.id === id);
+      if (!confirmDelete(`Delete this question${question ? `: "${question.text.slice(0, 48)}..."` : ""}?`)) return;
       state.activeQuestions = state.activeQuestions.filter((q) => q.id !== id);
       state.questions = state.questions.filter((q) => q.id !== id);
       notify("Question deleted.");
+    })
+  );
+  document.querySelectorAll("[data-delete-paper]").forEach((button) =>
+    button.addEventListener("click", () => {
+      const id = button.dataset.deletePaper;
+      const paper = state.papers.find((item) => item.id === id);
+      if (!confirmDelete(`Delete paper "${paper?.title || "this paper"}"?`)) return;
+      state.papers = state.papers.filter((item) => item.id !== id);
+      notify("Paper deleted.");
+      render();
     })
   );
   document.querySelectorAll("[data-edit-question]").forEach((button) =>
@@ -867,6 +912,26 @@ function wireEvents() {
   );
   const fav = $("[data-filter-fav]");
   if (fav) fav.addEventListener("click", () => { state.filters.favorites = !state.filters.favorites; render(); });
+  document.querySelectorAll("[data-paper-filter]").forEach((input) =>
+    input.addEventListener("input", () => {
+      state.paperFilters[input.dataset.paperFilter] = input.value;
+      render();
+    })
+  );
+  document.querySelectorAll("[data-paper-filter-chip]").forEach((button) =>
+    button.addEventListener("click", () => {
+      const key = button.dataset.paperFilterChip;
+      state.paperFilters[key] = state.paperFilters[key] === button.dataset.value ? "" : button.dataset.value;
+      render();
+    })
+  );
+  const clearPaperFilters = $("[data-clear-paper-filters]");
+  if (clearPaperFilters) {
+    clearPaperFilters.addEventListener("click", () => {
+      state.paperFilters = { query: "", className: "", subject: "", language: "" };
+      render();
+    });
+  }
   const analyze = $("[data-analyze]");
   if (analyze) {
     analyze.addEventListener("click", () => {
@@ -955,6 +1020,7 @@ function savePaper() {
     title: state.paperConfig.title,
     className: state.paperConfig.className,
     subject: state.paperConfig.subject,
+    language: state.paperConfig.language,
     date: new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
     count: state.activeQuestions.length,
     marks: state.activeQuestions.reduce((sum, q) => sum + Number(q.marks || 0), 0),

@@ -347,6 +347,39 @@ button {
   text-align: left;
 }
 
+.paper-main {
+  width: 100%;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.card-actions > * {
+  flex: 1;
+}
+
+.danger-lite-btn {
+  min-height: 44px;
+  border-radius: 8px;
+  padding: 0 16px;
+  color: #b91c1c;
+  background: #fee2e2;
+  font-weight: 800;
+}
+
+.filter-block {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .badge-row,
 .chip-row {
   display: flex;
