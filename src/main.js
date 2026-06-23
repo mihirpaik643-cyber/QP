@@ -1,6 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 
-const subjects = ["English", "Hindi", "Mathematics", "Science", "Social Studies"];
+const defaultSubjects = ["English", "Hindi", "Mathematics", "Science", "Social Studies"];
 const questionTypes = [
   "MCQ",
   "Short Answer",
@@ -74,6 +74,7 @@ const state = {
   route: location.hash.replace("#", "") || "/splash",
   isAuthed: localStorage.getItem("qp-auth") === "true",
   user: JSON.parse(localStorage.getItem("qp-user") || '{"name":"Mihir","school":"Green Valley School","designation":"Teacher"}'),
+  customSubjects: JSON.parse(localStorage.getItem("qp-custom-subjects") || '["GK","Ethics","Computer"]'),
   lang: localStorage.getItem("qp-lang") || "English",
   dark: localStorage.getItem("qp-dark") === "true",
   online: navigator.onLine,
@@ -114,6 +115,7 @@ const state = {
 
 function persist() {
   localStorage.setItem("qp-user", JSON.stringify(state.user));
+  localStorage.setItem("qp-custom-subjects", JSON.stringify(state.customSubjects));
   localStorage.setItem("qp-bank", JSON.stringify(state.questions));
   localStorage.setItem("qp-papers", JSON.stringify(state.papers));
   localStorage.setItem("qp-cloud", JSON.stringify(state.cloud));
@@ -133,6 +135,40 @@ function go(route) {
 
 function isPublicRoute(route) {
   return ["/splash", "/login", "/signup", "/forgot-password"].includes(route);
+}
+
+function allSubjects() {
+  return [...new Set([...defaultSubjects, ...state.customSubjects])];
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function subjectManager() {
+  return `
+    <div class="subject-manager">
+      <div class="field" style="margin-bottom:0">
+        <label>Add Subject</label>
+        <div class="inline-control">
+          <input name="newSubject" data-new-subject placeholder="GK, Ethics, Computer..." />
+          <button class="secondary-btn" data-add-subject>Add</button>
+        </div>
+      </div>
+      <div class="chip-row" style="margin-top:10px">
+        ${allSubjects().map((subject) => `<span class="chip ${state.customSubjects.includes(subject) ? "active" : ""}">${escapeHtml(subject)}${state.customSubjects.includes(subject) ? ` <button class="chip-x" data-remove-subject="${encodeURIComponent(subject)}" aria-label="Remove ${escapeHtml(subject)}">x</button>` : ""}</span>`).join("")}
+      </div>
+    </div>
+  `;
 }
 
 function notify(message) {
@@ -239,13 +275,13 @@ function field(label, name, value = "", type = "text") {
 }
 
 function selectField(label, name, options, selected = options[0]) {
-  return `<div class="field"><label>${label}</label><select name="${name}">${options.map((option) => `<option ${option === selected ? "selected" : ""}>${option}</option>`).join("")}</select></div>`;
+  return `<div class="field"><label>${label}</label><select name="${name}">${options.map((option) => `<option ${option === selected ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select></div>`;
 }
 
 function onboarding() {
   const steps = [
     { title: "Preferred Classes", key: "selectedClasses", items: Array.from({ length: 10 }, (_, i) => String(i + 1)) },
-    { title: "Preferred Subjects", key: "selectedSubjects", items: subjects },
+    { title: "Preferred Subjects", key: "selectedSubjects", items: allSubjects() },
     { title: "Interface Language", key: "lang", items: ["English", "Hindi", "Both"] }
   ];
   const step = steps[state.onboardingStep];
@@ -317,7 +353,7 @@ function createConfig() {
         <div class="form-grid two" style="margin-top:16px">
           ${field("Paper Title", "title", state.paperConfig.title)}
           ${selectField("Class", "className", Array.from({ length: 10 }, (_, i) => String(i + 1)), state.paperConfig.className)}
-          ${selectField("Subject", "subject", subjects, state.paperConfig.subject)}
+          ${selectField("Subject", "subject", allSubjects(), state.paperConfig.subject)}
           ${field("Chapter / Topic", "topic", state.paperConfig.topic)}
           ${selectField("Language", "language", ["English", "Hindi", "Bilingual"], state.paperConfig.language)}
           ${selectField("Difficulty", "difficulty", ["Easy", "Medium", "Hard", "Mixed"], state.paperConfig.difficulty)}
@@ -325,6 +361,7 @@ function createConfig() {
           ${field("Total Marks", "totalMarks", state.paperConfig.totalMarks, "number")}
         </div>
         <div class="chip-row"><span class="chip active">AI suggestion: Chapter summary</span><span class="chip">Important themes</span><span class="chip">Grammar section</span></div>
+        ${subjectManager()}
         <div class="sticky-actions"><button class="secondary-btn" data-go="/dashboard">Cancel</button><button class="primary-btn" data-save-config>Next: Add Question Types</button></div>
       </section>
       ${paperPreview()}
@@ -497,7 +534,7 @@ function questionBank() {
       <div class="chip-row" style="margin-top:12px">
         ${["", ...Array.from({ length: 10 }, (_, i) => String(i + 1))].map((c) => `<button class="chip ${state.filters.className === c ? "active" : ""}" data-filter-chip="className" data-value="${c}">${c || "All Classes"}</button>`).join("")}
       </div>
-      <div class="chip-row" style="margin-top:8px">${subjects.map((s) => `<button class="chip ${state.filters.subject === s ? "active" : ""}" data-filter-chip="subject" data-value="${s}">${s}</button>`).join("")}</div>
+      <div class="chip-row" style="margin-top:8px">${allSubjects().map((s) => `<button class="chip ${state.filters.subject === s ? "active" : ""}" data-filter-chip="subject" data-value="${s}">${s}</button>`).join("")}</div>
     </section>
     <section class="section question-list">
       ${filtered.length ? filtered.map(questionCard).join("") : '<div class="empty card">No questions match these filters.</div>'}
@@ -513,7 +550,7 @@ function addQuestion() {
     <section class="card">
       <div class="form-grid two">
         ${selectField("Class", "className", Array.from({ length: 10 }, (_, i) => String(i + 1)), "7")}
-        ${selectField("Subject", "subject", subjects, "English")}
+        ${selectField("Subject", "subject", allSubjects(), "English")}
         ${field("Topic / Chapter", "topic", "Poetry")}
         ${selectField("Question Type", "type", questionTypes, "Short Answer")}
         ${selectField("Difficulty", "difficulty", ["Easy", "Medium", "Hard"], "Medium")}
@@ -636,6 +673,7 @@ function profile() {
         <button class="secondary-btn" data-cloud="google">${state.cloud.google ? "Google Drive Connected" : "Connect Google Drive"}</button>
         <button class="secondary-btn" data-cloud="oneDrive">${state.cloud.oneDrive ? "OneDrive Connected" : "Connect OneDrive"}</button>
       </div>
+      ${subjectManager()}
       <div class="sticky-actions"><button class="danger-btn" data-logout>Logout</button><button class="primary-btn" data-save-profile>Save Profile</button></div>
     </section>`
   );
@@ -689,6 +727,34 @@ function render() {
 
 function wireEvents() {
   document.querySelectorAll("[data-go]").forEach((el) => el.addEventListener("click", () => go(el.dataset.go)));
+  document.querySelectorAll("[data-add-subject]").forEach((button) =>
+    button.addEventListener("click", () => {
+      const input = button.closest(".subject-manager")?.querySelector("[data-new-subject]");
+      const subject = input?.value.trim().replace(/\s+/g, " ");
+      if (!subject) {
+        notify("Type a subject name first.");
+        return;
+      }
+      if (allSubjects().some((item) => item.toLowerCase() === subject.toLowerCase())) {
+        notify(`${subject} is already in your subject list.`);
+        return;
+      }
+      state.customSubjects.push(subject);
+      state.selectedSubjects = [...new Set([...state.selectedSubjects, subject])];
+      notify(`${subject} added to subjects.`);
+      render();
+    })
+  );
+  document.querySelectorAll("[data-remove-subject]").forEach((button) =>
+    button.addEventListener("click", () => {
+      const subject = decodeURIComponent(button.dataset.removeSubject);
+      state.customSubjects = state.customSubjects.filter((item) => item !== subject);
+      state.selectedSubjects = state.selectedSubjects.filter((item) => item !== subject);
+      if (state.filters.subject === subject) state.filters.subject = "";
+      notify(`${subject} removed from custom subjects.`);
+      render();
+    })
+  );
   document.querySelectorAll("[data-auth]").forEach((el) =>
     el.addEventListener("click", () => {
       if (el.dataset.auth === "forgot") return notify("Password reset link sent.");
@@ -900,8 +966,8 @@ function savePaper() {
 function buildSearchResults(query) {
   const normalized = query.toLowerCase();
   const inferredClass = normalized.match(/class\s*(\d+)/)?.[1] || state.paperConfig.className;
-  const inferredSubject = subjects.find((subject) => normalized.includes(subject.toLowerCase())) || state.paperConfig.subject;
-  const topic = query.replace(/class\s*\d+/i, "").replace(new RegExp(inferredSubject, "i"), "").trim() || state.paperConfig.topic;
+  const inferredSubject = allSubjects().find((subject) => normalized.includes(subject.toLowerCase())) || state.paperConfig.subject;
+  const topic = query.replace(/class\s*\d+/i, "").replace(new RegExp(escapeRegExp(inferredSubject), "i"), "").trim() || state.paperConfig.topic;
   const sourceBase = encodeURIComponent(query);
   return [
     {

@@ -583,6 +583,29 @@ button {
   text-decoration: none;
 }
 
+.subject-manager {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.inline-control {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.chip-x {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 999px;
+  color: var(--primary);
+  background: rgba(79, 70, 229, 0.12);
+  font-weight: 900;
+}
+
 .skeleton {
   height: 14px;
   margin: 8px 0;
