@@ -104,8 +104,11 @@ const state = {
   ],
   activeQuestions: [],
   showAnswers: false,
+  cloud: JSON.parse(localStorage.getItem("qp-cloud") || '{"google":false,"oneDrive":false}'),
   filters: { query: "", className: "", subject: "", type: "", difficulty: "", favorites: false },
   uploadResults: [],
+  searchQuery: "",
+  searchLoading: false,
   searchResults: []
 };
 
@@ -113,14 +116,23 @@ function persist() {
   localStorage.setItem("qp-user", JSON.stringify(state.user));
   localStorage.setItem("qp-bank", JSON.stringify(state.questions));
   localStorage.setItem("qp-papers", JSON.stringify(state.papers));
+  localStorage.setItem("qp-cloud", JSON.stringify(state.cloud));
   localStorage.setItem("qp-dark", String(state.dark));
   localStorage.setItem("qp-lang", state.lang);
 }
 
 function go(route) {
+  if (!state.isAuthed && !isPublicRoute(route)) {
+    notify("Please login to view your documents.");
+    route = "/login";
+  }
   state.route = route;
   history.replaceState(null, "", `#${route}`);
   render();
+}
+
+function isPublicRoute(route) {
+  return ["/splash", "/login", "/signup", "/forgot-password"].includes(route);
 }
 
 function notify(message) {
@@ -449,9 +461,14 @@ function exportScreen() {
         <div class="button-stack">
           <button class="primary-btn" data-export="paper">Download PDF</button>
           <button class="secondary-btn" data-export="answers">Download Answer Key PDF</button>
-          <button class="secondary-btn" data-cloud="Google Drive">Save to Google Drive</button>
-          <button class="secondary-btn" data-cloud="OneDrive">Save to OneDrive</button>
+          <button class="secondary-btn" data-cloud="google">Save to Google Drive ${state.cloud.google ? "(Connected)" : ""}</button>
+          <button class="secondary-btn" data-cloud="oneDrive">Save to OneDrive ${state.cloud.oneDrive ? "(Connected)" : ""}</button>
           <button class="ghost-btn" data-share>Copy Share Link</button>
+        </div>
+        <div class="cloud-panel">
+          <strong>Cloud save status</strong>
+          <p class="muted">Google Drive: ${state.cloud.google ? "Connected and ready to save" : "Not connected yet"}</p>
+          <p class="muted">OneDrive: ${state.cloud.oneDrive ? "Connected and ready to save" : "Not connected yet"}</p>
         </div>
         <div class="field" style="margin-top:16px"><label>Paper Name</label><input value="${state.paperConfig.title}" /></div>
         <label class="chip active"><input type="checkbox" checked /> Save to QP.ai Library</label>
@@ -537,15 +554,32 @@ function internetSearch() {
     `
     <section class="card">
       <div class="form-grid two">
-        <input class="search-input" data-online-query placeholder="Class 9 Science Newton's Laws questions" />
-        <button class="primary-btn" data-online-search>Search</button>
+        <input class="search-input" data-online-query value="${state.searchQuery}" placeholder="Class 9 Science Newton's Laws questions" />
+        <button class="primary-btn" data-online-search>${state.searchLoading ? "Searching..." : "Search"}</button>
       </div>
-      <div class="chip-row" style="margin-top:12px"><span class="chip active">Class filter</span><span class="chip">Subject filter</span><span class="chip">Review before using</span></div>
+      <div class="chip-row" style="margin-top:12px"><span class="chip active">Source attribution</span><span class="chip">Review before using</span><span class="chip">Backend API required for live web</span></div>
     </section>
-    <section class="section question-list">${state.searchResults.map(questionCard).join("") || '<div class="empty card">Search results with source attribution will appear here.</div>'}</section>
+    <section class="section question-list">${state.searchLoading ? skeletonResults() : state.searchResults.map(searchResultCard).join("") || '<div class="empty card">Enter a topic and tap Search. This prototype creates reviewable internet-style results; live web search should be connected through a Supabase Edge Function so API keys stay private.</div>'}</section>
     ${state.searchResults.length ? '<div class="sticky-actions"><button class="secondary-btn" data-import-search>Add Selected to Bank</button><button class="primary-btn" data-go="/create-paper/question-types">Add to Paper</button></div>' : ""}`,
     { back: "/dashboard" }
   );
+}
+
+function skeletonResults() {
+  return Array.from({ length: 3 }, () => `<article class="question-card"><div class="skeleton" style="width:42%"></div><div class="skeleton"></div><div class="skeleton" style="width:70%"></div></article>`).join("");
+}
+
+function searchResultCard(question) {
+  return `<article class="question-card">
+    <div class="question-card-head"><span class="badge">${question.type}</span><span class="muted">${question.relevance}% match</span></div>
+    <p>${question.text}</p>
+    <p class="muted">Suggested answer: ${question.answer}</p>
+    <div class="badge-row">
+      <span class="chip">Class ${question.className}</span>
+      <span class="chip">${question.subject}</span>
+      <a class="source-link" href="${question.url}" target="_blank" rel="noreferrer">Source: ${question.sourceName}</a>
+    </div>
+  </article>`;
 }
 
 function savedPapers() {
@@ -571,6 +605,9 @@ function paperPreviewScreen() {
         <p class="muted">Class ${paper?.className || state.paperConfig.className} &middot; ${paper?.subject || state.paperConfig.subject}</p>
         <div class="button-stack">
           <button class="primary-btn" data-export="paper">Export PDF</button>
+          <button class="secondary-btn" data-go="/paper-export/current">Save / Cloud Options</button>
+          <button class="secondary-btn" data-cloud="google">Save to Google Drive ${state.cloud.google ? "(Connected)" : ""}</button>
+          <button class="secondary-btn" data-cloud="oneDrive">Save to OneDrive ${state.cloud.oneDrive ? "(Connected)" : ""}</button>
           <button class="secondary-btn" data-toggle-answers>${state.showAnswers ? "Hide" : "Show"} Answer Key</button>
           <button class="secondary-btn" data-go="/create-paper/review">Edit Paper</button>
           <button class="ghost-btn" data-share>Share</button>
@@ -596,8 +633,8 @@ function profile() {
       <div class="grid two">
         <button class="secondary-btn" data-toggle-dark>${state.dark ? "Light Mode" : "Dark Mode"}</button>
         <button class="secondary-btn" data-notify>Notifications On</button>
-        <button class="secondary-btn" data-cloud="Google Drive">Connect Google Drive</button>
-        <button class="secondary-btn" data-cloud="OneDrive">Connect OneDrive</button>
+        <button class="secondary-btn" data-cloud="google">${state.cloud.google ? "Google Drive Connected" : "Connect Google Drive"}</button>
+        <button class="secondary-btn" data-cloud="oneDrive">${state.cloud.oneDrive ? "OneDrive Connected" : "Connect OneDrive"}</button>
       </div>
       <div class="sticky-actions"><button class="danger-btn" data-logout>Logout</button><button class="primary-btn" data-save-profile>Save Profile</button></div>
     </section>`
@@ -618,6 +655,10 @@ function offlineScreen() {
 
 function render() {
   document.documentElement.classList.toggle("dark", state.dark);
+  if (!state.isAuthed && !isPublicRoute(state.route)) {
+    state.route = "/login";
+    history.replaceState(null, "", "#/login");
+  }
   const routes = {
     "/splash": splash,
     "/login": () => auth("login"),
@@ -773,15 +814,55 @@ function wireEvents() {
   const onlineSearch = $("[data-online-search]");
   if (onlineSearch) {
     onlineSearch.addEventListener("click", () => {
-      state.searchResults = sampleQuestions.slice(1).map((q, i) => ({ ...q, id: Date.now() + i, source: "Internet Source" }));
-      notify("Online results loaded with source labels.");
+      if (!state.online) {
+        notify("Internet search needs a connection.");
+        return;
+      }
+      const queryInput = $("[data-online-query]");
+      state.searchQuery = queryInput?.value.trim() || "Class 9 Science sample questions";
+      state.searchLoading = true;
       render();
+      setTimeout(() => {
+        state.searchResults = buildSearchResults(state.searchQuery);
+        state.searchLoading = false;
+        notify(`${state.searchResults.length} internet-style results loaded with sources.`);
+        render();
+      }, 700);
+    });
+  }
+  const onlineQuery = $("[data-online-query]");
+  if (onlineQuery) {
+    onlineQuery.addEventListener("input", () => {
+      state.searchQuery = onlineQuery.value;
+    });
+    onlineQuery.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") onlineSearch?.click();
     });
   }
   const importSearch = $("[data-import-search]");
-  if (importSearch) importSearch.addEventListener("click", () => { state.questions.unshift(...state.searchResults); notify("Internet questions added."); go("/question-bank"); });
+  if (importSearch) {
+    importSearch.addEventListener("click", () => {
+      state.questions.unshift(...state.searchResults.map((result) => ({ ...result, source: "Internet Source" })));
+      notify("Internet questions added.");
+      go("/question-bank");
+    });
+  }
   document.querySelectorAll("[data-export]").forEach((button) => button.addEventListener("click", () => window.print()));
-  document.querySelectorAll("[data-cloud]").forEach((button) => button.addEventListener("click", () => notify(`Connected to ${button.dataset.cloud}.`)));
+  document.querySelectorAll("[data-cloud]").forEach((button) =>
+    button.addEventListener("click", () => {
+      const provider = button.dataset.cloud;
+      state.cloud[provider] = true;
+      const label = provider === "google" ? "Google Drive" : "OneDrive";
+      if (state.route.startsWith("/paper-export") || state.route.startsWith("/paper-preview")) {
+        const latest = state.papers[0];
+        if (latest) latest.synced = label;
+        notify(`Saved to ${label}.`);
+      } else {
+        notify(`${label} connected.`);
+      }
+      render();
+    })
+  );
   const share = $("[data-share]");
   if (share) share.addEventListener("click", () => { navigator.clipboard?.writeText(location.href); notify("Share link copied."); });
   const toggleAnswers = $("[data-toggle-answers]");
@@ -814,6 +895,64 @@ function savePaper() {
     synced: "Local"
   };
   state.papers = [paper, ...state.papers.filter((p) => p.title !== paper.title)];
+}
+
+function buildSearchResults(query) {
+  const normalized = query.toLowerCase();
+  const inferredClass = normalized.match(/class\s*(\d+)/)?.[1] || state.paperConfig.className;
+  const inferredSubject = subjects.find((subject) => normalized.includes(subject.toLowerCase())) || state.paperConfig.subject;
+  const topic = query.replace(/class\s*\d+/i, "").replace(new RegExp(inferredSubject, "i"), "").trim() || state.paperConfig.topic;
+  const sourceBase = encodeURIComponent(query);
+  return [
+    {
+      id: Date.now() + 1,
+      text: `Explain the key concept of ${topic} in two or three sentences.`,
+      answer: `A clear answer should define ${topic}, include one example, and use age-appropriate wording.`,
+      className: inferredClass,
+      subject: inferredSubject,
+      topic,
+      type: "Short Answer",
+      difficulty: "Medium",
+      language: "English",
+      marks: 3,
+      source: "Internet Source",
+      sourceName: "NCERT-aligned search",
+      url: `https://www.google.com/search?q=${sourceBase}+NCERT+questions`,
+      relevance: 94
+    },
+    {
+      id: Date.now() + 2,
+      text: `Choose the correct option related to ${topic}.`,
+      answer: "The correct option depends on the final teacher-reviewed choices.",
+      className: inferredClass,
+      subject: inferredSubject,
+      topic,
+      type: "MCQ",
+      difficulty: "Easy",
+      language: "English",
+      marks: 1,
+      source: "Internet Source",
+      sourceName: "Teacher resource search",
+      url: `https://www.google.com/search?q=${sourceBase}+worksheet+mcq`,
+      relevance: 89
+    },
+    {
+      id: Date.now() + 3,
+      text: `Write a long answer question that connects ${topic} with a real classroom example.`,
+      answer: `The answer should describe the concept, explain its importance, and provide a relevant example.`,
+      className: inferredClass,
+      subject: inferredSubject,
+      topic,
+      type: "Long Answer",
+      difficulty: "Hard",
+      language: "English",
+      marks: 5,
+      source: "Internet Source",
+      sourceName: "Exam preparation search",
+      url: `https://www.google.com/search?q=${sourceBase}+exam+questions`,
+      relevance: 83
+    }
+  ];
 }
 
 window.addEventListener("online", () => { state.online = true; render(); });
