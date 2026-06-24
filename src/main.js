@@ -1047,17 +1047,12 @@ Rules:
 - Do not skip any question even if partially legible
 - If no questions found, return []`;
 
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
+        const response = await fetch("/api/analyze", {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
-            "anthropic-version": "2023-06-01"
+            "Content-Type": "application/json"
           },
-          body: JSON.stringify({
-            model: "claude-sonnet-4-6",
-            max_tokens: 4000,
-            messages: [{ role: "user", content: [fileContent, { type: "text", text: prompt }] }]
-          })
+          body: JSON.stringify({ fileContent, prompt })
         });
 
         clearInterval(ticker);
