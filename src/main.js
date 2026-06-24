@@ -108,17 +108,23 @@ const state = {
   cloud: JSON.parse(localStorage.getItem("qp-cloud") || '{"google":false,"oneDrive":false}'),
   filters: { query: "", className: "", subject: "", type: "", difficulty: "", favorites: false },
   paperFilters: { query: "", className: "", subject: "", language: "" },
+  uploadedFile: JSON.parse(localStorage.getItem("qp-uploaded-file") || "null"),
+  uploadLoading: false,
   uploadResults: [],
   searchQuery: "",
   searchLoading: false,
   searchResults: []
 };
 
+// Holds the actual File object between renders (can't go in localStorage)
+let _uploadedFileBlob = null;
+
 function persist() {
   localStorage.setItem("qp-user", JSON.stringify(state.user));
   localStorage.setItem("qp-custom-subjects", JSON.stringify(state.customSubjects));
   localStorage.setItem("qp-bank", JSON.stringify(state.questions));
   localStorage.setItem("qp-papers", JSON.stringify(state.papers));
+  localStorage.setItem("qp-uploaded-file", JSON.stringify(state.uploadedFile));
   localStorage.setItem("qp-cloud", JSON.stringify(state.cloud));
   localStorage.setItem("qp-dark", String(state.dark));
   localStorage.setItem("qp-lang", state.lang);
@@ -153,6 +159,15 @@ function escapeHtml(value) {
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = () => reject(new Error("File read failed"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function confirmDelete(message) {
@@ -578,6 +593,7 @@ function addQuestion() {
 }
 
 function uploadScreen() {
+  const file = state.uploadedFile;
   return shell(
     "Upload File",
     `
@@ -587,10 +603,15 @@ function uploadScreen() {
         <h2>Upload study material</h2>
         <p class="muted">JPG, PNG, PDF, DOCX up to 20MB.</p>
         <input type="file" data-file accept=".jpg,.jpeg,.png,.pdf,.docx" />
+        ${file ? `<div class="file-pill"><strong>${escapeHtml(file.name)}</strong><span>${escapeHtml(file.type || "Unknown type")} &middot; ${formatBytes(file.size)}</span></div>` : '<p class="muted">No file selected yet.</p>'}
       </div>
-      <div class="sticky-actions"><button class="primary-btn" data-analyze>Analyze File</button></div>
+      <div class="analysis-note">
+        <strong>Prototype note</strong>
+        <p class="muted">This browser-only demo cannot truly read image text yet. Real image/PDF/DOCX analysis should run through Supabase Edge Functions with OCR/OpenAI Vision, so the uploaded content is actually extracted.</p>
+      </div>
+      <div class="sticky-actions"><button class="primary-btn" data-analyze>${state.uploadLoading ? "Analyzing..." : "Analyze File"}</button></div>
     </section>
-    <section class="section question-list">${state.uploadResults.map(questionCard).join("")}</section>
+    <section class="section question-list">${state.uploadLoading ? skeletonResults() : state.uploadResults.map(questionCard).join("")}</section>
     ${state.uploadResults.length ? '<div class="sticky-actions"><button class="secondary-btn" data-import-upload> Add Selected to Question Bank</button><button class="primary-btn" data-go="/create-paper/question-types">Add to Current Paper</button></div>' : ""}`,
     { back: "/dashboard" }
   );
@@ -932,11 +953,100 @@ function wireEvents() {
       render();
     });
   }
+  const fileInput = $("[data-file]");
+  if (fileInput) {
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      _uploadedFileBlob = file;
+      state.uploadedFile = { name: file.name, type: file.type, size: file.size };
+      state.uploadResults = [];
+      render();
+    });
+  }
   const analyze = $("[data-analyze]");
   if (analyze) {
-    analyze.addEventListener("click", () => {
-      state.uploadResults = sampleQuestions.slice(0, 3).map((q, i) => ({ ...q, id: Date.now() + i, source: "Uploaded File" }));
-      notify("File analyzed. 3 questions detected.");
+    analyze.addEventListener("click", async () => {
+      if (!_uploadedFileBlob) {
+        notify("Please select a file first.");
+        return;
+      }
+      state.uploadLoading = true;
+      render();
+      try {
+        const base64 = await readFileAsBase64(_uploadedFileBlob);
+        const mediaType = _uploadedFileBlob.type || "image/jpeg";
+        const isImage = mediaType.startsWith("image/");
+        const isPDF = mediaType === "application/pdf";
+
+        let fileContent;
+        if (isImage) {
+          fileContent = { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } };
+        } else if (isPDF) {
+          fileContent = { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } };
+        } else {
+          notify("Unsupported file type. Please upload JPG, PNG, or PDF.");
+          state.uploadLoading = false;
+          render();
+          return;
+        }
+
+        const prompt = `You are an expert teacher assistant. Analyze this exam paper image and extract every question you can see.
+Return ONLY a valid JSON array (no markdown, no explanation). Each object must have:
+- "text": the full question text exactly as written
+- "answer": a concise model answer
+- "type": one of ["MCQ","Short Answer","Long Answer","Fill in the Blanks","True/False","Match the Following","One-Word Answer"]
+- "difficulty": one of ["Easy","Medium","Hard"]
+- "marks": number (infer from the paper if shown, otherwise estimate based on question type)
+- "topic": the topic or chapter this question relates to
+
+If no questions are found, return an empty array [].`;
+
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-6",
+            max_tokens: 1000,
+            messages: [{ role: "user", content: [fileContent, { type: "text", text: prompt }] }]
+          })
+        });
+
+        const data = await response.json();
+        if (data.error) throw new Error(data.error.message);
+
+        const raw = data.content.find(b => b.type === "text")?.text || "[]";
+        const clean = raw.replace(/```json|```/g, "").trim();
+        const extracted = JSON.parse(clean);
+
+        if (!Array.isArray(extracted) || extracted.length === 0) {
+          notify("No questions found in this file. Try a clearer image.");
+          state.uploadLoading = false;
+          render();
+          return;
+        }
+
+        state.uploadResults = extracted.map((q, i) => ({
+          id: Date.now() + i,
+          favorite: false,
+          source: "Uploaded File",
+          className: state.paperConfig.className,
+          subject: state.paperConfig.subject,
+          language: state.paperConfig.language || "English",
+          text: q.text || "Untitled question",
+          answer: q.answer || "",
+          type: q.type || "Short Answer",
+          difficulty: q.difficulty || "Medium",
+          marks: Number(q.marks) || 1,
+          topic: q.topic || state.paperConfig.topic
+        }));
+
+        notify(`${state.uploadResults.length} question${state.uploadResults.length !== 1 ? "s" : ""} extracted from your file.`);
+      } catch (err) {
+        console.error("Analyze error:", err);
+        notify("Analysis failed. Please try a clearer image or a different file.");
+      }
+      state.uploadLoading = false;
       render();
     });
   }
