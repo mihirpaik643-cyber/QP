@@ -77,6 +77,7 @@ const state = {
   customSubjects: JSON.parse(localStorage.getItem("qp-custom-subjects") || '["GK","Ethics","Computer"]'),
   lang: localStorage.getItem("qp-lang") || "English",
   dark: localStorage.getItem("qp-dark") === "true",
+  apiKeyVisible: false,
   online: navigator.onLine,
   toast: "",
   onboardingStep: 0,
@@ -114,7 +115,7 @@ const state = {
   searchQuery: "",
   searchLoading: false,
   searchResults: [],
-  apiKey: localStorage.getItem("qp-api-key") || ""
+  apiKey: localStorage.getItem("qp-gemini-api-key") || ""
 };
 
 let _uploadedFileBlob = null;
@@ -135,6 +136,33 @@ function readFileAsBase64(file) {
   });
 }
 
+async function callGeminiInteractions(payload) {
+  const headers = {
+    "Content-Type": "application/json",
+    "x-goog-api-key": state.apiKey
+  };
+
+  if (location.protocol !== "file:") {
+    try {
+      const proxied = await fetch("/api/analyze", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload)
+      });
+
+      if (proxied.ok || ![404, 405, 501].includes(proxied.status)) return proxied;
+    } catch {
+      // Fall back to direct mode below for plain static hosting.
+    }
+  }
+
+  return fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload)
+  });
+}
+
 function persist() {
   localStorage.setItem("qp-user", JSON.stringify(state.user));
   localStorage.setItem("qp-custom-subjects", JSON.stringify(state.customSubjects));
@@ -144,7 +172,8 @@ function persist() {
   localStorage.setItem("qp-cloud", JSON.stringify(state.cloud));
   localStorage.setItem("qp-dark", String(state.dark));
   localStorage.setItem("qp-lang", state.lang);
-  if (state.apiKey) localStorage.setItem("qp-api-key", state.apiKey);
+  if (state.apiKey) localStorage.setItem("qp-gemini-api-key", state.apiKey);
+  else localStorage.removeItem("qp-gemini-api-key");
 }
 
 function go(route) {
@@ -210,29 +239,30 @@ function notify(message) {
 
 function icon(name) {
   const icons = {
-    home: "H",
-    papers: "P",
-    create: "+",
-    bank: "B",
-    profile: "U",
-    upload: "^",
-    search: "?",
-    file: "[]",
-    cloud: "CL",
-    back: "<",
-    star: "*"
+    home: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.8 12 3l9 7.8v9.7a.5.5 0 0 1-.5.5h-5.2v-6.2H8.7V21H3.5a.5.5 0 0 1-.5-.5z"/></svg>',
+    papers: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h8l4 4v14H7z"/><path d="M15 3v5h5M10 13h7M10 17h7"/></svg>',
+    create: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+    bank: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21z"/><path d="M8 7h8M8 11h8M8 15h5"/></svg>',
+    profile: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
+    upload: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 16v3h14v-3"/></svg>',
+    search: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg>',
+    file: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v6h5"/></svg>',
+    cloud: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18h10a4 4 0 0 0 .6-8 6 6 0 0 0-11.2-1.8A5 5 0 0 0 7 18z"/></svg>',
+    back: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18 9 12l6-6"/></svg>',
+    key: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8M17 6l2 2M15 8l2 2"/></svg>',
+    star: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2 7.5 14 3 9.6l6.2-.9z"/></svg>'
   };
-  return icons[name] || ".";
+  return icons[name] || "";
 }
 
 function shell(title, content, options = {}) {
-  const back = options.back ? `<button class="ghost-btn" data-go="${options.back}">${icon("back")}</button>` : "";
+  const back = options.back ? `<button class="icon-btn" data-go="${options.back}" aria-label="Back">${icon("back")}</button>` : "";
   const noNav = options.noNav ? "" : bottomNav();
   return `
     <main class="app ${state.dark ? "dark" : ""}">
       ${!state.online ? '<div class="offline-banner">You are offline. Saved papers and question bank remain available.</div>' : ""}
       <div class="topbar">
-        <div class="brand-row" style="margin:0">${back}<div class="logo-mark" style="width:40px;height:40px;border-radius:12px">QP</div><h1>${title}</h1></div>
+        <div class="brand-row" style="margin:0">${back}<div class="logo-mark compact">QP</div><h1>${title}</h1></div>
         ${options.action || `<button class="avatar" data-go="/profile">${state.user.name.slice(0, 1).toUpperCase()}</button>`}
       </div>
       <section class="shell"><div class="content">${content}</div></section>
@@ -334,14 +364,22 @@ function onboarding() {
 }
 
 function dashboard() {
+  const apiReady = Boolean(state.apiKey);
   return shell(
     "QP.ai",
     `
     <div class="hero-panel">
-      <h2>Hello, ${state.user.name}! </h2>
-      <p>Create curriculum-aligned papers, reuse your question bank, and export polished PDFs.</p>
-      <button class="primary-btn" style="background:white;color:var(--primary)" data-go="/create-paper/config">Create New Paper</button>
+      <div>
+        <span class="overline">Teacher workspace</span>
+        <h2>Hello, ${state.user.name}.</h2>
+        <p>Create curriculum-aligned papers, extract questions from uploads, and export polished PDFs.</p>
+      </div>
+      <button class="hero-action" data-go="/create-paper/config">${icon("create")} New Paper</button>
     </div>
+    <button class="ai-status ${apiReady ? "ready" : ""}" data-go="/api-settings">
+      <span class="status-icon">${icon("key")}</span>
+      <span><strong>${apiReady ? "AI analysis is ready" : "Add your Gemini API key"}</strong><small>${apiReady ? "Upload a paper and extract questions." : "Connect Gemini in Profile to analyze PDFs and photos."}</small></span>
+    </button>
     <div class="stats">
       <div class="stat-card"><span class="stat-value">${state.papers.length}</span><span class="stat-label">Papers Created</span></div>
       <div class="stat-card"><span class="stat-value">${state.questions.length}</span><span class="stat-label">Questions in Bank</span></div>
@@ -350,8 +388,8 @@ function dashboard() {
     <section class="section">
       <div class="section-head"><h2 class="section-title">Quick Actions</h2></div>
       <div class="grid two">
-        <button class="card quick-action" data-go="/upload"><span class="icon">${icon("upload")}</span><strong>Upload File</strong><span class="muted">PDF, DOCX, JPG, PNG</span></button>
-        <button class="card quick-action" data-go="/internet-search"><span class="icon">${icon("search")}</span><strong>Search Internet</strong><span class="muted">Import with sources</span></button>
+        <button class="card quick-action" data-go="/upload"><span class="icon">${icon("upload")}</span><strong>Upload File</strong><span class="muted">PDF, JPG, PNG</span></button>
+        <button class="card quick-action" data-go="/internet-search"><span class="icon">${icon("search")}</span><strong>Search Online</strong><span class="muted">Import with sources</span></button>
         <button class="card quick-action" data-go="/question-bank"><span class="icon">${icon("bank")}</span><strong>Question Bank</strong><span class="muted">Filter and reuse</span></button>
         <button class="card quick-action" data-go="/saved-papers"><span class="icon">${icon("papers")}</span><strong>Saved Papers</strong><span class="muted">Preview and export</span></button>
       </div>
@@ -623,7 +661,7 @@ function uploadScreen() {
       </div>
       ${state.uploadLoading ? `
         <div class="progress" style="margin-top:14px"><div id="upload-progress-bar" style="width:${_uploadProgress}%"></div></div>
-        <p class="muted" style="text-align:center;font-size:13px;margin-top:8px">Claude is reading your paper…</p>` : ""}
+        <p class="muted" style="text-align:center;font-size:13px;margin-top:8px">Gemini is reading your paper...</p>` : ""}
       <div class="sticky-actions">
         <button class="primary-btn" data-analyze ${state.uploadLoading || !state.apiKey ? "disabled" : ""}>
           ${state.uploadLoading ? "Analyzing…" : "🔍 Analyze Paper"}
@@ -734,6 +772,41 @@ function paperPreviewScreen() {
   );
 }
 
+function apiSettings() {
+  return shell(
+    "AI Setup",
+    `
+    <section class="card">
+      <div class="api-card">
+        <div class="api-card-head">
+          <div class="status-icon">${icon("key")}</div>
+          <div>
+            <h2 style="margin:0">Install API Key</h2>
+            <p class="muted">${state.apiKey ? "Your Gemini key is saved on this device." : "Add your Gemini API key to enable Upload & Analyze."}</p>
+          </div>
+        </div>
+        <div class="field">
+          <label>Gemini API Key</label>
+          <div class="secret-row">
+            <input name="apiKey" type="${state.apiKeyVisible ? "text" : "password"}" value="${escapeHtml(state.apiKey)}" placeholder="AIza..." autocomplete="off" />
+            <button class="secondary-btn" data-toggle-api-visibility>${state.apiKeyVisible ? "Hide" : "Show"}</button>
+          </div>
+          <p class="muted" style="font-size:12px;margin:6px 0 0">The key is stored only in this browser. For sharing the app publicly, move API calls to a backend first.</p>
+        </div>
+        <div class="api-actions">
+          <a class="secondary-btn" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">Get Key</a>
+          <button class="danger-lite-btn" data-clear-api-key ${state.apiKey ? "" : "disabled"}>Remove Key</button>
+        </div>
+      </div>
+      <div class="sticky-actions">
+        <button class="secondary-btn" data-go="/profile">Profile</button>
+        <button class="primary-btn" data-save-api-key>Save Key</button>
+      </div>
+    </section>`,
+    { back: "/dashboard" }
+  );
+}
+
 function profile() {
   return shell(
     "Profile & Settings",
@@ -747,12 +820,13 @@ function profile() {
         ${selectField("UI Language", "profileLang", ["English", "Hindi"], state.lang)}
       </div>
       <div class="field" style="margin-top:4px">
-        <label>Anthropic API Key</label>
-        <input name="apiKey" type="password" value="${state.apiKey}" placeholder="sk-ant-api03-..." />
-        <p class="muted" style="font-size:12px;margin-top:5px">🔒 Stored only on your device. Enter once and it works forever. Get a key at <a href="https://console.anthropic.com" target="_blank" style="color:var(--primary)">console.anthropic.com</a></p>
+        <label>Gemini API Key</label>
+        <input name="apiKey" type="password" value="${state.apiKey}" placeholder="AIza..." />
+        <p class="muted" style="font-size:12px;margin-top:5px">Stored only on your device. Get a key at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--primary)">Google AI Studio</a></p>
       </div>
       ${state.apiKey ? `<p style="font-size:12px;color:var(--success);font-weight:700;margin-top:-6px">✅ API key saved — Upload & Analyze is active.</p>` : `<p style="font-size:12px;color:var(--accent);font-weight:700;margin-top:-6px">⚠️ No API key yet — Upload & Analyze won't work until you add one.</p>`}
       <div class="grid two">
+        <button class="secondary-btn" data-go="/api-settings">${state.apiKey ? "API Key Connected" : "Install API Key"}</button>
         <button class="secondary-btn" data-toggle-dark>${state.dark ? "Light Mode" : "Dark Mode"}</button>
         <button class="secondary-btn" data-notify>Notifications On</button>
         <button class="secondary-btn" data-cloud="google">${state.cloud.google ? "Google Drive Connected" : "Connect Google Drive"}</button>
@@ -800,6 +874,7 @@ function render() {
     "/upload": uploadScreen,
     "/internet-search": internetSearch,
     "/saved-papers": savedPapers,
+    "/api-settings": apiSettings,
     "/profile": profile,
     "/notifications": notifications,
     "/offline": offlineScreen
@@ -1001,11 +1076,11 @@ function wireEvents() {
     });
   }
 
-  // Analyze with real Claude Vision API
+  // Analyze with Gemini multimodal API
   const analyze = $("[data-analyze]");
   if (analyze) {
     analyze.addEventListener("click", async () => {
-      if (!state.apiKey) { notify("Add your Anthropic API key in Profile first."); go("/profile"); return; }
+      if (!state.apiKey) { notify("Add your Gemini API key first."); go("/api-settings"); return; }
       if (!_uploadedFileBlob) { notify("Select a file first."); return; }
 
       state.uploadLoading = true;
@@ -1027,8 +1102,8 @@ function wireEvents() {
         const mediaType = _uploadedFileBlob.type || "image/jpeg";
 
         const fileContent = mediaType.startsWith("image/")
-          ? { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } }
-          : { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } };
+          ? { type: "image", data: base64, mime_type: mediaType }
+          : { type: "document", data: base64, mime_type: "application/pdf" };
 
         const prompt = `You are an expert teacher assistant analyzing a scanned or photographed exam question paper.
 
@@ -1048,19 +1123,12 @@ Rules:
 - Do not skip any question even if partially legible
 - If no questions found, return []`;
 
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "anthropic-version": "2023-06-01",
-            "anthropic-dangerous-direct-browser-access": "true",
-            "x-api-key": state.apiKey
-          },
-          body: JSON.stringify({
-            model: "claude-sonnet-4-6",
-            max_tokens: 4000,
-            messages: [{ role: "user", content: [fileContent, { type: "text", text: prompt }] }]
-          })
+        const response = await callGeminiInteractions({
+          model: "gemini-3.5-flash",
+          input: [fileContent, { type: "text", text: prompt }],
+          generation_config: {
+            temperature: 0.2
+          }
         });
 
         clearInterval(ticker);
@@ -1072,7 +1140,7 @@ Rules:
         }
 
         const data = await response.json();
-        const rawText = data.content?.find(b => b.type === "text")?.text || "[]";
+        const rawText = data.output_text || data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "[]";
         const clean = rawText.replace(/```json\n?|```/g, "").trim();
         const extracted = JSON.parse(clean);
 
@@ -1105,7 +1173,10 @@ Rules:
       } catch (err) {
         clearInterval(ticker);
         console.error("Analyze error:", err);
-        notify("Analysis failed: " + (err.message || "Please try a clearer image."));
+        const message = err?.message === "Failed to fetch"
+          ? "Network failed. Start the app with node server.js, then upload again."
+          : err.message || "Please try a clearer image.";
+        notify("Analysis failed: " + message);
       }
 
       state.uploadLoading = false;
@@ -1173,6 +1244,31 @@ Rules:
   if (toggleAnswers) toggleAnswers.addEventListener("click", () => { state.showAnswers = !state.showAnswers; render(); });
   const toggleDark = $("[data-toggle-dark]");
   if (toggleDark) toggleDark.addEventListener("click", () => { state.dark = !state.dark; render(); });
+  const toggleApiVisibility = $("[data-toggle-api-visibility]");
+  if (toggleApiVisibility) {
+    toggleApiVisibility.addEventListener("click", () => {
+      state.apiKeyVisible = !state.apiKeyVisible;
+      render();
+    });
+  }
+  const saveApiKey = $("[data-save-api-key]");
+  if (saveApiKey) {
+    saveApiKey.addEventListener("click", () => {
+      state.apiKey = $('[name="apiKey"]')?.value.trim() || "";
+      persist();
+      notify(state.apiKey ? "API key saved." : "API key field is empty.");
+      render();
+    });
+  }
+  const clearApiKey = $("[data-clear-api-key]");
+  if (clearApiKey) {
+    clearApiKey.addEventListener("click", () => {
+      state.apiKey = "";
+      localStorage.removeItem("qp-gemini-api-key");
+      notify("API key removed.");
+      render();
+    });
+  }
   const logout = $("[data-logout]");
   if (logout) logout.addEventListener("click", () => { state.isAuthed = false; localStorage.removeItem("qp-auth"); go("/login"); });
   const saveProfile = $("[data-save-profile]");
@@ -1185,7 +1281,7 @@ Rules:
       const keyInput = $('[name="apiKey"]')?.value.trim();
       if (keyInput) {
         state.apiKey = keyInput;
-        localStorage.setItem("qp-api-key", keyInput);
+        localStorage.setItem("qp-gemini-api-key", keyInput);
       }
       notify("Profile saved.");
       render();
