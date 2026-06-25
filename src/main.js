@@ -113,10 +113,10 @@ const state = {
   uploadResults: [],
   searchQuery: "",
   searchLoading: false,
-  searchResults: []
+  searchResults: [],
+  apiKey: localStorage.getItem("qp-api-key") || ""
 };
 
-// Module-level vars that can't live in localStorage
 let _uploadedFileBlob = null;
 let _uploadProgress = 0;
 
@@ -144,6 +144,7 @@ function persist() {
   localStorage.setItem("qp-cloud", JSON.stringify(state.cloud));
   localStorage.setItem("qp-dark", String(state.dark));
   localStorage.setItem("qp-lang", state.lang);
+  if (state.apiKey) localStorage.setItem("qp-api-key", state.apiKey);
 }
 
 function go(route) {
@@ -606,39 +607,32 @@ function uploadScreen() {
     "Upload File",
     `
     <section class="card">
+      ${!state.apiKey ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 14px;font-size:13px;font-weight:700;color:#92400e;margin-bottom:14px">
+        ⚠️ No API key set. <button class="link-btn" style="font-size:13px" data-go="/profile">Go to Profile → add your key</button>
+      </div>` : ""}
       <div class="upload-zone">
         <div class="icon">📤</div>
         <h2>Drop your question paper here</h2>
         <p class="muted">JPG, PNG or PDF — up to 20 MB</p>
         <input type="file" data-file accept=".jpg,.jpeg,.png,.pdf" />
-        ${file
-          ? `<div class="file-pill" style="display:flex;align-items:center;gap:12px;margin-top:12px;padding:10px 12px;background:white;border:1px solid var(--line);border-radius:8px;text-align:left">
-               <span style="font-size:22px">${fileIcon}</span>
-               <div style="flex:1"><strong>${escapeHtml(file.name)}</strong><br><span class="muted">${escapeHtml(file.type || "Unknown")} · ${formatBytes(file.size)}</span></div>
-             </div>`
-          : ""}
+        ${file ? `
+          <div class="file-pill" style="display:flex;align-items:center;gap:12px;margin-top:12px;padding:10px 12px;background:white;border:1px solid var(--line);border-radius:8px;text-align:left">
+            <span style="font-size:22px">${fileIcon}</span>
+            <div style="flex:1"><strong>${escapeHtml(file.name)}</strong><br><span class="muted">${escapeHtml(file.type || "Unknown")} · ${formatBytes(file.size)}</span></div>
+          </div>` : ""}
       </div>
-
       ${state.uploadLoading ? `
         <div class="progress" style="margin-top:14px"><div id="upload-progress-bar" style="width:${_uploadProgress}%"></div></div>
-        <p class="muted" style="text-align:center;font-size:13px;margin-top:8px">Claude is reading your paper…</p>
-      ` : ""}
-
+        <p class="muted" style="text-align:center;font-size:13px;margin-top:8px">Claude is reading your paper…</p>` : ""}
       <div class="sticky-actions">
-        <button class="primary-btn" data-analyze ${state.uploadLoading ? "disabled" : ""}>
+        <button class="primary-btn" data-analyze ${state.uploadLoading || !state.apiKey ? "disabled" : ""}>
           ${state.uploadLoading ? "Analyzing…" : "🔍 Analyze Paper"}
         </button>
       </div>
     </section>
-
     <section class="section question-list">
-      ${state.uploadLoading
-        ? skeletonResults()
-        : state.uploadResults.length
-          ? state.uploadResults.map(questionCard).join("")
-          : !file ? `<div class="empty card"><p>Select a question paper image or PDF above, then tap <strong>Analyze Paper</strong>.</p></div>` : ""}
+      ${state.uploadLoading ? skeletonResults() : state.uploadResults.length ? state.uploadResults.map(questionCard).join("") : !file ? `<div class="empty card"><p>Select a question paper image or PDF above, then tap <strong>Analyze Paper</strong>.</p></div>` : ""}
     </section>
-
     ${state.uploadResults.length ? `
       <div class="sticky-actions">
         <button class="secondary-btn" data-import-upload>Add ${state.uploadResults.length} Questions to Bank</button>
@@ -752,6 +746,12 @@ function profile() {
         ${selectField("Designation", "profileDesignation", ["Teacher", "Tutor", "Principal", "Other"], state.user.designation)}
         ${selectField("UI Language", "profileLang", ["English", "Hindi"], state.lang)}
       </div>
+      <div class="field" style="margin-top:4px">
+        <label>Anthropic API Key</label>
+        <input name="apiKey" type="password" value="${state.apiKey}" placeholder="sk-ant-api03-..." />
+        <p class="muted" style="font-size:12px;margin-top:5px">🔒 Stored only on your device. Enter once and it works forever. Get a key at <a href="https://console.anthropic.com" target="_blank" style="color:var(--primary)">console.anthropic.com</a></p>
+      </div>
+      ${state.apiKey ? `<p style="font-size:12px;color:var(--success);font-weight:700;margin-top:-6px">✅ API key saved — Upload & Analyze is active.</p>` : `<p style="font-size:12px;color:var(--accent);font-weight:700;margin-top:-6px">⚠️ No API key yet — Upload & Analyze won't work until you add one.</p>`}
       <div class="grid two">
         <button class="secondary-btn" data-toggle-dark>${state.dark ? "Light Mode" : "Dark Mode"}</button>
         <button class="secondary-btn" data-notify>Notifications On</button>
@@ -1005,6 +1005,7 @@ function wireEvents() {
   const analyze = $("[data-analyze]");
   if (analyze) {
     analyze.addEventListener("click", async () => {
+      if (!state.apiKey) { notify("Add your Anthropic API key in Profile first."); go("/profile"); return; }
       if (!_uploadedFileBlob) { notify("Select a file first."); return; }
 
       state.uploadLoading = true;
@@ -1012,7 +1013,7 @@ function wireEvents() {
       _uploadProgress = 15;
       render();
 
-      // Animate progress bar without full re-renders
+      // Animate progress bar smoothly without full re-renders
       const ticker = setInterval(() => {
         if (_uploadProgress < 85) {
           _uploadProgress = Math.min(85, _uploadProgress + Math.random() * 7);
@@ -1047,12 +1048,18 @@ Rules:
 - Do not skip any question even if partially legible
 - If no questions found, return []`;
 
-        const response = await fetch("/api/analyze", {
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01",
+            "x-api-key": state.apiKey
           },
-          body: JSON.stringify({ fileContent, prompt })
+          body: JSON.stringify({
+            model: "claude-sonnet-4-6",
+            max_tokens: 4000,
+            messages: [{ role: "user", content: [fileContent, { type: "text", text: prompt }] }]
+          })
         });
 
         clearInterval(ticker);
@@ -1174,7 +1181,13 @@ Rules:
       state.user.school = $('[name="profileSchool"]').value;
       state.user.designation = $('[name="profileDesignation"]').value;
       state.lang = $('[name="profileLang"]').value;
+      const keyInput = $('[name="apiKey"]')?.value.trim();
+      if (keyInput) {
+        state.apiKey = keyInput;
+        localStorage.setItem("qp-api-key", keyInput);
+      }
       notify("Profile saved.");
+      render();
     });
   }
 }
