@@ -6,6 +6,30 @@ const ROOT = __dirname;
 const PORT = Number(process.env.PORT || 4173);
 const MAX_BODY_BYTES = 35 * 1024 * 1024;
 
+function loadDotEnv() {
+  const envPath = path.join(ROOT, ".env");
+  if (!fs.existsSync(envPath)) return;
+  const lines = fs.readFileSync(envPath, "utf8").split("\n");
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (key && !(key in process.env)) process.env[key] = value;
+  }
+}
+
+loadDotEnv();
+const SERVER_DEFAULT_KEY = (process.env.GEMINI_API_KEY || "").trim();
+
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -54,7 +78,7 @@ function readJsonBody(req) {
 }
 
 async function analyze(req, res) {
-  const apiKey = req.headers["x-goog-api-key"];
+  const apiKey = req.headers["x-goog-api-key"] || SERVER_DEFAULT_KEY;
   if (!apiKey) {
     send(res, 400, JSON.stringify({ error: { message: "Missing Gemini API key." } }));
     return;
@@ -66,14 +90,33 @@ async function analyze(req, res) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-goog-api-key": apiKey
+        "x-goog-api-key": apiKey,
+        "Api-Revision": "2026-05-20"
       },
       body: JSON.stringify(payload)
     });
 
     const text = await upstream.text();
+    console.log(`--- Gemini response: HTTP ${upstream.status} ---`);
+    try {
+      const parsed = JSON.parse(text);
+      console.log("status field:", parsed.status);
+      console.log(
+        "step types:",
+        (parsed.steps || []).map((s) => s.type)
+      );
+      (parsed.steps || []).forEach((step, i) => {
+        if (step.type !== "model_output") return;
+        console.log(`step[${i}] (model_output) content:`, JSON.stringify(step.content));
+      });
+      if (parsed.error) console.log("error field:", JSON.stringify(parsed.error));
+    } catch {
+      console.log(text.length > 2000 ? text.slice(0, 2000) + "\n...[truncated, not valid JSON]..." : text);
+    }
+    console.log("--- end Gemini response ---");
     send(res, upstream.status, text, upstream.headers.get("content-type") || "application/json; charset=utf-8");
   } catch (err) {
+    console.error("Analyze request failed before reaching Google:", err.message || err);
     send(res, 500, JSON.stringify({ error: { message: err.message || "Analyze request failed." } }));
   }
 }
@@ -108,6 +151,11 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === "GET" && req.url === "/api/key-status") {
+    send(res, 200, JSON.stringify({ hasKey: Boolean(SERVER_DEFAULT_KEY) }));
+    return;
+  }
+
   if (req.method === "GET") {
     serveStatic(req, res);
     return;
@@ -118,4 +166,5 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`QP.ai running at http://127.0.0.1:${PORT}/`);
+  console.log(SERVER_DEFAULT_KEY ? "Gemini key loaded from .env — Profile screen will show it as already connected." : "No .env key found — add one to .env or enter a key in the app's Profile screen.");
 });

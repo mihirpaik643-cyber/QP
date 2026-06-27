@@ -115,7 +115,8 @@ const state = {
   searchQuery: "",
   searchLoading: false,
   searchResults: [],
-  apiKey: localStorage.getItem("qp-gemini-api-key") || ""
+  apiKey: localStorage.getItem("qp-gemini-api-key") || "",
+  serverKeyReady: false
 };
 
 let _uploadedFileBlob = null;
@@ -136,11 +137,13 @@ function readFileAsBase64(file) {
   });
 }
 
+function hasUsableKey() {
+  return Boolean(state.apiKey) || state.serverKeyReady;
+}
+
 async function callGeminiInteractions(payload) {
-  const headers = {
-    "Content-Type": "application/json",
-    "x-goog-api-key": state.apiKey
-  };
+  const headers = { "Content-Type": "application/json", "Api-Revision": "2026-05-20" };
+  if (state.apiKey) headers["x-goog-api-key"] = state.apiKey;
 
   if (location.protocol !== "file:") {
     try {
@@ -364,7 +367,7 @@ function onboarding() {
 }
 
 function dashboard() {
-  const apiReady = Boolean(state.apiKey);
+  const apiReady = hasUsableKey();
   return shell(
     "QP.ai",
     `
@@ -645,7 +648,7 @@ function uploadScreen() {
     "Upload File",
     `
     <section class="card">
-      ${!state.apiKey ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 14px;font-size:13px;font-weight:700;color:#92400e;margin-bottom:14px">
+      ${!hasUsableKey() ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 14px;font-size:13px;font-weight:700;color:#92400e;margin-bottom:14px">
         ⚠️ No API key set. <button class="link-btn" style="font-size:13px" data-go="/profile">Go to Profile → add your key</button>
       </div>` : ""}
       <div class="upload-zone">
@@ -663,7 +666,7 @@ function uploadScreen() {
         <div class="progress" style="margin-top:14px"><div id="upload-progress-bar" style="width:${_uploadProgress}%"></div></div>
         <p class="muted" style="text-align:center;font-size:13px;margin-top:8px">Gemini is reading your paper...</p>` : ""}
       <div class="sticky-actions">
-        <button class="primary-btn" data-analyze ${state.uploadLoading || !state.apiKey ? "disabled" : ""}>
+        <button class="primary-btn" data-analyze ${state.uploadLoading || !hasUsableKey() ? "disabled" : ""}>
           ${state.uploadLoading ? "Analyzing…" : "🔍 Analyze Paper"}
         </button>
       </div>
@@ -782,7 +785,7 @@ function apiSettings() {
           <div class="status-icon">${icon("key")}</div>
           <div>
             <h2 style="margin:0">Install API Key</h2>
-            <p class="muted">${state.apiKey ? "Your Gemini key is saved on this device." : "Add your Gemini API key to enable Upload & Analyze."}</p>
+            <p class="muted">${state.apiKey ? "Your Gemini key is saved on this device." : state.serverKeyReady ? "Using the key from your project's .env file — no need to enter one here." : "Add your Gemini API key to enable Upload & Analyze."}</p>
           </div>
         </div>
         <div class="field">
@@ -824,9 +827,9 @@ function profile() {
         <input name="apiKey" type="password" value="${state.apiKey}" placeholder="AIza..." />
         <p class="muted" style="font-size:12px;margin-top:5px">Stored only on your device. Get a key at <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--primary)">Google AI Studio</a></p>
       </div>
-      ${state.apiKey ? `<p style="font-size:12px;color:var(--success);font-weight:700;margin-top:-6px">✅ API key saved — Upload & Analyze is active.</p>` : `<p style="font-size:12px;color:var(--accent);font-weight:700;margin-top:-6px">⚠️ No API key yet — Upload & Analyze won't work until you add one.</p>`}
+      ${state.apiKey ? `<p style="font-size:12px;color:var(--success);font-weight:700;margin-top:-6px">✅ API key saved — Upload & Analyze is active.</p>` : state.serverKeyReady ? `<p style="font-size:12px;color:var(--success);font-weight:700;margin-top:-6px">✅ Using the key from .env — Upload & Analyze is active.</p>` : `<p style="font-size:12px;color:var(--accent);font-weight:700;margin-top:-6px">⚠️ No API key yet — Upload & Analyze won't work until you add one.</p>`}
       <div class="grid two">
-        <button class="secondary-btn" data-go="/api-settings">${state.apiKey ? "API Key Connected" : "Install API Key"}</button>
+        <button class="secondary-btn" data-go="/api-settings">${hasUsableKey() ? "API Key Connected" : "Install API Key"}</button>
         <button class="secondary-btn" data-toggle-dark>${state.dark ? "Light Mode" : "Dark Mode"}</button>
         <button class="secondary-btn" data-notify>Notifications On</button>
         <button class="secondary-btn" data-cloud="google">${state.cloud.google ? "Google Drive Connected" : "Connect Google Drive"}</button>
@@ -1080,7 +1083,7 @@ function wireEvents() {
   const analyze = $("[data-analyze]");
   if (analyze) {
     analyze.addEventListener("click", async () => {
-      if (!state.apiKey) { notify("Add your Gemini API key first."); go("/api-settings"); return; }
+      if (!hasUsableKey()) { notify("Add your Gemini API key first."); go("/api-settings"); return; }
       if (!_uploadedFileBlob) { notify("Select a file first."); return; }
 
       state.uploadLoading = true;
@@ -1125,10 +1128,7 @@ Rules:
 
         const response = await callGeminiInteractions({
           model: "gemini-3.5-flash",
-          input: [fileContent, { type: "text", text: prompt }],
-          generation_config: {
-            temperature: 0.2
-          }
+          input: [fileContent, { type: "text", text: prompt }]
         });
 
         clearInterval(ticker);
@@ -1140,7 +1140,13 @@ Rules:
         }
 
         const data = await response.json();
-        const rawText = data.output_text || data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "[]";
+        const stepText = (data.steps || [])
+          .filter((step) => step.type === "model_output")
+          .flatMap((step) => step.content || [])
+          .filter((block) => block.type === "text")
+          .map((block) => block.text || "")
+          .join("");
+        const rawText = stepText || data.output_text || data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "[]";
         const clean = rawText.replace(/```json\n?|```/g, "").trim();
         const extracted = JSON.parse(clean);
 
@@ -1368,6 +1374,18 @@ window.addEventListener("hashchange", () => { state.route = location.hash.replac
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {});
+}
+
+if (location.protocol !== "file:") {
+  fetch("/api/key-status")
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => {
+      if (data && data.hasKey) {
+        state.serverKeyReady = true;
+        render();
+      }
+    })
+    .catch(() => {});
 }
 
 render();
